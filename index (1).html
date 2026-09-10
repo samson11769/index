@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>校園電視台 - 電子 Log Book</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- 引入 Firebase SDK (Module 模式) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { 
+      getFirestore, 
+      collection, 
+      addDoc, 
+      onSnapshot, 
+      doc, 
+      updateDoc, 
+      query, 
+      orderBy, 
+      serverTimestamp 
+    } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+    // Firebase 設定資料
+    const firebaseConfig = {
+      apiKey: "AIzaSyAMYMOxMBbT0GvSi7h2Bg677opVJS9dYzg",
+      authDomain: "campus-studio-25210.firebaseapp.com",
+      projectId: "campus-studio-25210",
+      storageBucket: "campus-studio-25210.firebasestorage.app",
+      messagingSenderId: "107702082369",
+      appId: "1:107702082369:web:6a6f8e6318d3d593b95fc0",
+      measurementId: "G-LM890QQCL2"
+    };
+
+    // 初始化 Firebase 及 Firestore
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const logsRef = collection(db, "logs");
+
+    const form = document.getElementById('logForm');
+    const logList = document.getElementById('logList');
+
+    // 提交借用資料至 Firebase
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const submitBtn = form.querySelector('button[type="submit"]');
+      submitBtn.disabled = true;
+      submitBtn.innerText = "登記中...";
+
+      try {
+        await addDoc(logsRef, {
+          borrower: document.getElementById('borrower').value,
+          device: document.getElementById('device').value,
+          sdCard: document.getElementById('sdCard').value || '無',
+          batteryCount: parseInt(document.getElementById('batteryCount').value) || 0,
+          hasCharger: document.getElementById('hasCharger').checked,
+          hasBag: document.getElementById('hasBag').checked,
+          borrowTime: serverTimestamp(),
+          returned: false,
+          returnTime: null
+        });
+
+        form.reset();
+      } catch (error) {
+        alert("新增失敗: " + error.message);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerText = "登記借出";
+      }
+    });
+
+    // 即時監聽資料庫變化 (Real-time Listener)
+    const q = query(logsRef, orderBy("borrowTime", "desc"));
+    onSnapshot(q, (snapshot) => {
+      logList.innerHTML = '';
+      
+      if (snapshot.empty) {
+        logList.innerHTML = '<p class="text-sm text-gray-400 text-center py-4">暫無借出紀錄</p>';
+        return;
+      }
+
+      snapshot.forEach((docSnap) => {
+        const log = docSnap.data();
+        const id = docSnap.id;
+        
+        const bTime = log.borrowTime ? new Date(log.borrowTime.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '剛才';
+        const rTime = log.returnTime ? new Date(log.returnTime.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+        const item = document.createElement('div');
+        item.className = `p-3 rounded-lg border transition ${log.returned ? 'bg-gray-100 border-gray-200 opacity-60' : 'bg-blue-50 border-blue-200'}`;
+        item.innerHTML = `
+          <div class="flex justify-between items-start">
+            <div>
+              <span class="font-bold text-slate-800">${log.borrower}</span>
+              <span class="text-xs text-gray-500"> (${bTime})</span>
+              <p class="text-sm font-semibold text-blue-900 mt-0.5">${log.device}</p>
+            </div>
+            ${!log.returned ? 
+              `<button data-id="${id}" class="return-btn text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded font-medium shadow-sm transition">歸還</button>` : 
+              `<span class="text-xs bg-gray-200 px-2 py-1 rounded text-gray-600">已還 (${rTime})</span>`
+            }
+          </div>
+          <div class="mt-2 text-xs text-gray-600 border-t border-gray-200/60 pt-2 space-y-0.5">
+            <p>💾 SD Card: <b class="text-gray-800">${log.sdCard}</b> | 🔋 電池: <b class="text-gray-800">${log.batteryCount} 粒</b></p>
+            <p>🎒 包含配件: ${log.hasCharger ? '⚡火牛/充電器 ' : ''}${log.hasBag ? '👜相機袋' : ''}</p>
+          </div>
+        `;
+        logList.appendChild(item);
+      });
+
+      document.querySelectorAll('.return-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          const docId = e.target.getAttribute('data-id');
+          await updateDoc(doc(db, "logs", docId), {
+            returned: true,
+            returnTime: serverTimestamp()
+          });
+        });
+      });
+    });
+  </script>
+</head>
+<body class="bg-slate-100 p-4 min-h-screen">
+  <div class="max-w-md mx-auto bg-white rounded-xl shadow-md overflow-hidden p-6 space-y-6">
+    
+    <header class="border-b pb-4 flex justify-between items-center">
+      <div>
+        <h1 class="text-xl font-bold text-slate-800">📺 Campus Studio Log Book</h1>
+        <p class="text-xs text-slate-500">雲端即時器材借用系統</p>
+      </div>
+      <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+        ● 即時連線
+      </span>
+    </header>
+
+    <!-- 借用表單 -->
+    <form id="logForm" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700">借用人姓名 / 班別</label>
+        <input type="text" id="borrower" required placeholder="例：3A 張小明" class="mt-1 w-full border border-gray-300 rounded-md p-2 text-sm focus:ring-blue-500 focus:border-blue-500">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700">選擇主器材</label>
+        <select id="device" class="mt-1 w-full border border-gray-300 rounded-md p-2 text-sm">
+          <option value="Sony A7IV (Camera A)">Sony A7IV (Camera A)</option>
+          <option value="Sony A7III (Camera B)">Sony A7III (Camera B)</option>
+          <option value="Canon R6 (Camera C)">Canon R6 (Camera C)</option>
+          <option value="DJI Mic 無線麥克風">DJI Mic 無線麥克風</option>
+          <option value="Tripod 腳架">Tripod 腳架</option>
+        </select>
+      </div>
+
+      <!-- 配件登記區 -->
+      <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-3">
+        <span class="block text-xs font-semibold text-gray-600 uppercase tracking-wider">配件登記</span>
+        
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-xs text-gray-500">SD Card 編號</label>
+            <input type="text" id="sdCard" placeholder="例: SD-01" class="w-full border rounded p-1.5 text-sm bg-white">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500">電池數量</label>
+            <input type="number" id="batteryCount" value="1" min="0" max="5" class="w-full border rounded p-1.5 text-sm bg-white">
+          </div>
+        </div>
+
+        <div class="flex gap-4 pt-1">
+          <label class="inline-flex items-center text-sm">
+            <input type="checkbox" id="hasCharger" class="rounded border-gray-300 text-blue-600">
+            <span class="ml-1.5 text-xs text-gray-700">連火牛/充電器</span>
+          </label>
+          <label class="inline-flex items-center text-sm">
+            <input type="checkbox" id="hasBag" class="rounded border-gray-300 text-blue-600" checked>
+            <span class="ml-1.5 text-xs text-gray-700">連相機袋</span>
+          </label>
+        </div>
+      </div>
+
+      <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-md transition text-sm shadow">
+        登記借出
+      </button>
+    </form>
+
+    <!-- 即時借出紀錄列表 -->
+    <div>
+      <h2 class="text-base font-bold text-slate-800 mb-3">📋 借出紀錄 (雲端同步)</h2>
+      <div id="logList" class="space-y-2.5 max-h-[400px] overflow-y-auto pr-1">
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>
