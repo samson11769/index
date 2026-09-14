@@ -9,6 +9,13 @@
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
     import { 
+      getAuth, 
+      signInWithPopup, 
+      GoogleAuthProvider, 
+      signOut, 
+      onAuthStateChanged 
+    } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+    import { 
       getFirestore, 
       collection, 
       addDoc, 
@@ -31,9 +38,15 @@
     };
 
     const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
     const db = getFirestore(app);
     const logsRef = collection(db, "logs");
+    const provider = new GoogleAuthProvider();
 
+    // ⚠️ 請修改為你學校的 Email Domain (例: school.edu.hk)
+    const SCHOOL_DOMAIN = "ndc.edu.hk"; 
+
+    let currentUser = null;
     let allLogs = [];
     let currentTab = 'active'; 
     let selectedDevices = new Set();
@@ -42,14 +55,53 @@
     let isAdmin = false;
     const ADMIN_PASS = "admin888";
 
-    const form = document.getElementById('logForm');
-    const logList = document.getElementById('logList');
-    const searchInput = document.getElementById('searchInput');
-    const returnModal = document.getElementById('returnModal');
-    const verifyBorrowerInput = document.getElementById('verifyBorrowerInput');
-    const confirmReturnCheckbox = document.getElementById('confirmReturnCheckbox');
-    const confirmReturnBtn = document.getElementById('confirmReturnBtn');
-    const adminModal = document.getElementById('adminModal');
+    // 元素引用
+    const authOverlay = document.getElementById('authOverlay');
+    const appContent = document.getElementById('appContent');
+    const loginBtn = document.getElementById('loginBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const userEmailDisplay = document.getElementById('userEmailDisplay');
+
+    // Google 登入邏輯
+    loginBtn.addEventListener('click', async () => {
+      try {
+        const result = await signInWithPopup(auth, provider);
+        const email = result.user.email;
+        
+        // 驗證 Email Domain
+        if (!email.endsWith(`@${SCHOOL_DOMAIN}`)) {
+          alert(`❌ 存取失敗：必須使用學校 Email (@${SCHOOL_DOMAIN}) 登入！`);
+          await signOut(auth);
+        }
+      } catch (error) {
+        alert("登入失敗: " + error.message);
+      }
+    });
+
+    // 登出
+    logoutBtn.addEventListener('click', () => {
+      signOut(auth);
+    });
+
+    // 監聽登入狀態
+    onAuthStateChanged(auth, (user) => {
+      if (user && user.email.endsWith(`@${SCHOOL_DOMAIN}`)) {
+        currentUser = user;
+        userEmailDisplay.innerText = user.email;
+        authOverlay.classList.add('hidden');
+        appContent.classList.remove('hidden');
+        
+        // 自動帶入姓名/班別欄位 (若 Google 有顯示名稱)
+        const borrowerInput = document.getElementById('borrower');
+        if (user.displayName && !borrowerInput.value) {
+          borrowerInput.value = user.displayName;
+        }
+      } else {
+        currentUser = null;
+        authOverlay.classList.remove('hidden');
+        appContent.classList.add('hidden');
+      }
+    });
 
     // Admin 登入切換
     document.getElementById('adminLoginBtn').addEventListener('click', () => {
@@ -87,11 +139,11 @@
         let disable = false;
 
         if (hasInsta) {
-          disable = true; // 選 Insta360 不能揀鏡頭
+          disable = true;
         } else if (hasSony && !hasCanon) {
-          disable = !isSonyLens; // 選 Sony 只保留 G Master
+          disable = !isSonyLens;
         } else if (hasCanon && !hasSony) {
-          disable = !isCanonLens; // 選 Canon 只保留 Canon 鏡頭
+          disable = !isCanonLens;
         }
 
         if (disable) {
@@ -151,8 +203,8 @@
       });
     });
 
-    // 提交借用資料
-    form.addEventListener('submit', async (e) => {
+    // 表單提交
+    document.getElementById('logForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       
       if (selectedDevices.size === 0) {
@@ -186,13 +238,14 @@
         return;
       }
 
-      const submitBtn = form.querySelector('button[type="submit"]');
+      const submitBtn = e.target.querySelector('button[type="submit"]');
       submitBtn.disabled = true;
       submitBtn.innerText = "登記中...";
 
       try {
         await addDoc(logsRef, {
           borrower: document.getElementById('borrower').value.trim(),
+          userEmail: currentUser ? currentUser.email : '',
           device: Array.from(selectedDevices).join(', '),
           sdCard: sdCardInput,
           batteryCount: parseInt(document.getElementById('batteryCount').value) || 0,
@@ -204,7 +257,7 @@
           photoProcessed: true
         });
 
-        form.reset();
+        e.target.reset();
         selectedDevices.clear();
         sdCardSelect.innerHTML = '<option value="">請先選擇 SD 卡容量</option>';
         sdCardSelect.disabled = true;
@@ -251,7 +304,9 @@
 
     // 渲染清單
     function render() {
+      const searchInput = document.getElementById('searchInput');
       const keyword = searchInput.value.toLowerCase().trim();
+      const logList = document.getElementById('logList');
       logList.innerHTML = '';
 
       const filtered = allLogs.filter(log => {
@@ -303,15 +358,15 @@
         logList.appendChild(item);
       });
 
-      // 驗證本人歸還 Modal 觸發
+      // 歸還驗證 Modal 觸發
       document.querySelectorAll('.open-return-modal').forEach(btn => {
         btn.addEventListener('click', (e) => {
           pendingReturnId = e.target.getAttribute('data-id');
           pendingBorrowerName = e.target.getAttribute('data-borrower');
-          verifyBorrowerInput.value = '';
-          confirmReturnCheckbox.checked = false;
+          document.getElementById('verifyBorrowerInput').value = '';
+          document.getElementById('confirmReturnCheckbox').checked = false;
           checkReturnValid();
-          returnModal.classList.remove('hidden');
+          document.getElementById('returnModal').classList.remove('hidden');
         });
       });
 
@@ -319,44 +374,42 @@
       document.querySelectorAll('.open-admin-modal').forEach(btn => {
         btn.addEventListener('click', (e) => {
           pendingReturnId = e.target.getAttribute('data-id');
-          adminModal.classList.remove('hidden');
+          document.getElementById('adminModal').classList.remove('hidden');
         });
       });
     }
 
-    // 檢查歸還驗證資格
+    // 歸還檢查
     function checkReturnValid() {
-      const inputName = verifyBorrowerInput.value.trim();
+      const inputName = document.getElementById('verifyBorrowerInput').value.trim();
       const isNameMatched = inputName === pendingBorrowerName;
-      const isChecked = confirmReturnCheckbox.checked;
-      confirmReturnBtn.disabled = !(isNameMatched && isChecked);
+      const isChecked = document.getElementById('confirmReturnCheckbox').checked;
+      document.getElementById('confirmReturnBtn').disabled = !(isNameMatched && isChecked);
     }
 
-    verifyBorrowerInput.addEventListener('input', checkReturnValid);
-    confirmReturnCheckbox.addEventListener('change', checkReturnValid);
+    document.getElementById('verifyBorrowerInput').addEventListener('input', checkReturnValid);
+    document.getElementById('confirmReturnCheckbox').addEventListener('change', checkReturnValid);
 
     document.getElementById('cancelReturnBtn').addEventListener('click', () => {
-      returnModal.classList.add('hidden');
+      document.getElementById('returnModal').classList.add('hidden');
       pendingReturnId = null;
-      pendingBorrowerName = "";
     });
 
-    confirmReturnBtn.addEventListener('click', async () => {
+    document.getElementById('confirmReturnBtn').addEventListener('click', async () => {
       if (pendingReturnId) {
         await updateDoc(doc(db, "logs", pendingReturnId), {
           returned: true,
           returnTime: serverTimestamp(),
           photoProcessed: true
         });
-        returnModal.classList.add('hidden');
+        document.getElementById('returnModal').classList.add('hidden');
         pendingReturnId = null;
-        pendingBorrowerName = "";
       }
     });
 
-    // Admin 強制歸還邏輯
+    // Admin 強制歸還
     document.getElementById('cancelAdminBtn').addEventListener('click', () => {
-      adminModal.classList.add('hidden');
+      document.getElementById('adminModal').classList.add('hidden');
       pendingReturnId = null;
     });
 
@@ -367,7 +420,7 @@
           returnTime: serverTimestamp(),
           photoProcessed: true
         });
-        adminModal.classList.add('hidden');
+        document.getElementById('adminModal').classList.add('hidden');
         pendingReturnId = null;
       }
     });
@@ -379,7 +432,7 @@
           returnTime: serverTimestamp(),
           photoProcessed: false
         });
-        adminModal.classList.add('hidden');
+        document.getElementById('adminModal').classList.add('hidden');
         pendingReturnId = null;
       }
     });
@@ -391,16 +444,17 @@
         return;
       }
 
-      let csvContent = "\uFEFF借用人/班別,借用器材與鏡頭,SD Card,電池數量,有火牛,有相機袋,借用時間,歸還狀態,過相/執相狀態,歸還時間\n";
+      let csvContent = "\uFEFF借用人/班別,登入Email,借用器材與鏡頭,SD Card,電池數量,有火牛,有相機袋,借用時間,歸還狀態,過相/執相狀態,歸還時間\n";
 
       allLogs.forEach(log => {
         const bTime = log.borrowTime ? new Date(log.borrowTime.toDate()).toLocaleString() : '';
         const rTime = log.returnTime ? new Date(log.returnTime.toDate()).toLocaleString() : '';
         const status = log.returned ? "已歸還" : "未歸還";
-        const photoStatus = log.photoProcessed === false ? "⚠️ 未過相/執相 (Admin強制歸還)" : "已過相/執相";
+        const photoStatus = log.photoProcessed === false ? "⚠️ 未過相/執相" : "已過相/執相";
         
         const row = [
           `"${log.borrower || ''}"`,
+          `"${log.userEmail || ''}"`,
           `"${log.device || ''}"`,
           `"${log.sdCard || ''}"`,
           `"${log.batteryCount || 0}"`,
@@ -417,10 +471,8 @@
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      
-      const today = new Date().toISOString().slice(0, 10);
       link.setAttribute("href", url);
-      link.setAttribute("download", `TV_Studio_LogBook_${today}.csv`);
+      link.setAttribute("download", `TV_Studio_LogBook_${new Date().toISOString().slice(0,10)}.csv`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -431,7 +483,6 @@
     onSnapshot(q, (snapshot) => {
       allLogs = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
       document.getElementById('activeCount').innerText = allLogs.filter(l => !l.returned).length;
-      
       updateChipAvailability();
       render();
     });
@@ -451,11 +502,26 @@
       render();
     });
 
-    searchInput.addEventListener('input', render);
+    document.getElementById('searchInput').addEventListener('input', render);
   </script>
 </head>
-<body class="bg-slate-100 p-4 min-h-screen">
-  <div class="max-w-md mx-auto bg-white rounded-xl shadow-md overflow-hidden p-6 space-y-5">
+<body class="bg-slate-100 p-4 min-h-screen flex items-center justify-center">
+
+  <!-- 未登入畫面 (登入卡片) -->
+  <div id="authOverlay" class="max-w-md w-full bg-white rounded-xl shadow-md p-8 text-center space-y-5">
+    <img src="CS_Logo.jpg" alt="Logo" class="h-16 w-auto mx-auto object-contain">
+    <div>
+      <h2 class="text-xl font-bold text-slate-800">校園電視台 Log Book</h2>
+      <p class="text-xs text-slate-500 mt-1">請使用學校 Google Email 帳戶登入以繼續</p>
+    </div>
+    <button id="loginBtn" class="w-full bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold py-2.5 px-4 rounded-lg shadow-sm transition flex items-center justify-center gap-2">
+      <svg class="w-5 h-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
+      使用 Google 登入
+    </button>
+  </div>
+
+  <!-- 已登入主系統 -->
+  <div id="appContent" class="hidden max-w-md w-full bg-white rounded-xl shadow-md overflow-hidden p-6 space-y-5">
     
     <header class="border-b pb-3 flex justify-between items-center gap-3">
       <div class="flex items-center gap-2.5">
@@ -465,12 +531,13 @@
             <h1 class="text-base font-bold text-slate-800 leading-tight">Campus Studio</h1>
             <span id="adminStatus" class="hidden text-[10px] bg-purple-600 text-white font-bold px-1.5 py-0.5 rounded">ADMIN</span>
           </div>
-          <p class="text-[11px] text-slate-500 leading-tight">電子 Log Book 系統</p>
+          <p class="text-[11px] text-slate-500 leading-tight" id="userEmailDisplay"></p>
         </div>
       </div>
-      <button id="adminLoginBtn" class="text-xs bg-slate-800 text-slate-200 px-2.5 py-1 rounded hover:bg-slate-700 transition shrink-0">
-        🔑 Admin 登入
-      </button>
+      <div class="flex gap-1">
+        <button id="adminLoginBtn" class="text-xs bg-slate-800 text-slate-200 px-2 py-1 rounded hover:bg-slate-700 transition">🔑 Admin</button>
+        <button id="logoutBtn" class="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded hover:bg-gray-300 transition">🚪 登出</button>
+      </div>
     </header>
 
     <!-- 借用表單 -->
@@ -484,7 +551,6 @@
       <div class="space-y-3">
         <label class="block text-xs font-semibold text-gray-700">選擇器材及鏡頭（可多選）<span class="text-red-500">*</span></label>
         
-        <!-- 相機 -->
         <div>
           <span class="text-[11px] font-bold text-gray-400 uppercase">📷 相機 / 攝影機</span>
           <div class="flex flex-wrap gap-1.5 mt-1">
@@ -502,7 +568,6 @@
           </div>
         </div>
 
-        <!-- 鏡頭 -->
         <div>
           <span class="text-[11px] font-bold text-gray-400 uppercase">🔍 鏡頭 (Lenses)</span>
           <div class="flex flex-wrap gap-1.5 mt-1">
@@ -518,7 +583,6 @@
           </div>
         </div>
 
-        <!-- 麥克風與配件... -->
         <div>
           <span class="text-[11px] font-bold text-gray-400 uppercase">🎙️ 麥克風 & 穩定器</span>
           <div class="flex flex-wrap gap-1.5 mt-1">
@@ -534,19 +598,12 @@
       <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-3">
         <span class="block text-xs font-semibold text-gray-600 uppercase tracking-wider">配件及 SD Card 登記</span>
         
-        <!-- SD 卡選擇 -->
         <div class="space-y-1.5">
           <label class="text-xs font-medium text-gray-700 block">1. 選擇 SD Card 容量 <span class="text-red-500">*</span></label>
           <div class="flex gap-4 bg-white p-2 rounded border border-gray-200 text-xs">
-            <label class="flex items-center gap-1 cursor-pointer">
-              <input type="radio" name="sdSize" value="32GB" class="text-blue-600"> 32GB (SD01-20)
-            </label>
-            <label class="flex items-center gap-1 cursor-pointer">
-              <input type="radio" name="sdSize" value="64GB" class="text-blue-600"> 64GB (SD21-30)
-            </label>
-            <label class="flex items-center gap-1 cursor-pointer">
-              <input type="radio" name="sdSize" value="128GB" class="text-blue-600"> 128GB (SD31-40)
-            </label>
+            <label class="flex items-center gap-1 cursor-pointer"><input type="radio" name="sdSize" value="32GB" class="text-blue-600"> 32GB (SD01-20)</label>
+            <label class="flex items-center gap-1 cursor-pointer"><input type="radio" name="sdSize" value="64GB" class="text-blue-600"> 64GB (SD21-30)</label>
+            <label class="flex items-center gap-1 cursor-pointer"><input type="radio" name="sdSize" value="128GB" class="text-blue-600"> 128GB (SD31-40)</label>
           </div>
         </div>
 
@@ -580,7 +637,7 @@
       </button>
     </form>
 
-    <!-- 紀錄清單區塊 -->
+    <!-- 紀錄清單 -->
     <div class="pt-2 border-t space-y-3">
       <div class="flex items-center justify-between gap-2">
         <div class="flex-1 flex bg-slate-100 p-1 rounded-lg">
@@ -599,8 +656,7 @@
 
       <input type="text" id="searchInput" placeholder="🔍 搜尋人名 / 器材 / 鏡頭 / SD 卡號..." class="w-full border rounded-md p-2 text-xs bg-slate-50">
 
-      <div id="logList" class="space-y-2.5 max-h-[350px] overflow-y-auto pr-1">
-      </div>
+      <div id="logList" class="space-y-2.5 max-h-[350px] overflow-y-auto pr-1"></div>
     </div>
 
   </div>
@@ -609,52 +665,40 @@
   <div id="returnModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
     <div class="bg-white rounded-xl max-w-sm w-full p-5 space-y-4 shadow-xl">
       <h3 class="text-base font-bold text-gray-800 border-b pb-2">🔒 本人歸還確認</h3>
-      
       <div class="space-y-2">
         <label class="block text-xs font-medium text-gray-700">請輸入「借用人姓名/班別」進行身份驗證：</label>
         <input type="text" id="verifyBorrowerInput" placeholder="輸入借用時填寫的姓名" class="w-full border rounded-md p-2 text-xs focus:ring-blue-500 border-gray-300">
       </div>
-      
       <div class="bg-amber-50 border border-amber-200 rounded-lg p-3">
         <label class="flex items-start gap-2.5 cursor-pointer">
           <input type="checkbox" id="confirmReturnCheckbox" class="mt-0.5 rounded border-amber-400 text-blue-600 focus:ring-blue-500">
           <span class="text-xs font-bold text-amber-900 leading-snug">我已確認過相 / 過片及完成執相工作</span>
         </label>
       </div>
-
       <div class="flex gap-2 pt-2">
-        <button id="cancelReturnBtn" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold py-2 rounded-lg transition">
-          取消
-        </button>
-        <button id="confirmReturnBtn" disabled class="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white text-xs font-semibold py-2 rounded-lg transition">
-          確認歸還
-        </button>
+        <button id="cancelReturnBtn" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold py-2 rounded-lg transition">取消</button>
+        <button id="confirmReturnBtn" disabled class="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white text-xs font-semibold py-2 rounded-lg transition">確認歸還</button>
       </div>
     </div>
   </div>
 
-  <!-- Super Admin 強制歸還 Modal -->
+  <!-- Admin 強制歸還 Modal -->
   <div id="adminModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
     <div class="bg-white rounded-xl max-w-sm w-full p-5 space-y-4 shadow-xl border-t-4 border-purple-600">
       <h3 class="text-base font-bold text-purple-900 border-b pb-2">⚡ Super Admin 強制歸還設定</h3>
       <p class="text-xs text-gray-600 leading-relaxed">請選擇此筆器材的歸還狀況：</p>
-      
       <div class="space-y-2 pt-1">
         <button id="adminReturnProcessedBtn" class="w-full bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-2.5 px-3 rounded-lg transition text-left flex justify-between items-center">
           <span>✅ 正常歸還（已過相 / 執相）</span>
           <span>➔</span>
         </button>
-        
         <button id="adminReturnUnprocessedBtn" class="w-full bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2.5 px-3 rounded-lg transition text-left flex justify-between items-center">
           <span>❌ 未執相 / 未過片 (強制收回)</span>
           <span>➔</span>
         </button>
       </div>
-
       <div class="pt-2">
-        <button id="cancelAdminBtn" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold py-2 rounded-lg transition">
-          取消
-        </button>
+        <button id="cancelAdminBtn" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold py-2 rounded-lg transition">取消</button>
       </div>
     </div>
   </div>
