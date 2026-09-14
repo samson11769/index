@@ -55,7 +55,7 @@
         isAdmin = false;
         document.getElementById('adminStatus').classList.add('hidden');
         document.getElementById('adminLoginBtn').innerText = "🔑 Admin 登入";
-        document.getElementById('adminLoginBtn').className = "text-xs bg-slate-800 text-slate-200 px-2.5 py-1 rounded hover:bg-slate-700 transition";
+        document.getElementById('adminLoginBtn').className = "text-xs bg-slate-800 text-slate-200 px-2.5 py-1 rounded hover:bg-slate-700 transition shrink-0";
         render();
       } else {
         const pass = prompt("請輸入 Super Admin 密碼：");
@@ -63,7 +63,7 @@
           isAdmin = true;
           document.getElementById('adminStatus').classList.remove('hidden');
           document.getElementById('adminLoginBtn').innerText = "🚪 登出 Admin";
-          document.getElementById('adminLoginBtn').className = "text-xs bg-red-600 text-white px-2.5 py-1 rounded hover:bg-red-700 transition";
+          document.getElementById('adminLoginBtn').className = "text-xs bg-red-600 text-white px-2.5 py-1 rounded hover:bg-red-700 transition shrink-0";
           render();
         } else if (pass !== null) {
           alert("密碼錯誤！");
@@ -232,7 +232,7 @@
         logList.appendChild(item);
       });
 
-      // 學生正常歸還 Modal
+      // 學生歸還 Modal
       document.querySelectorAll('.open-return-modal').forEach(btn => {
         btn.addEventListener('click', (e) => {
           pendingReturnId = e.target.getAttribute('data-id');
@@ -296,14 +296,14 @@
         await updateDoc(doc(db, "logs", pendingReturnId), {
           returned: true,
           returnTime: serverTimestamp(),
-          photoProcessed: false // 註記未執相/過片
+          photoProcessed: false
         });
         adminModal.classList.add('hidden');
         pendingReturnId = null;
       }
     });
 
-    // 匯出 CSV 報表
+    // 匯出 CSV
     document.getElementById('exportBtn').addEventListener('click', () => {
       if (allLogs.length === 0) {
         alert("目前沒有任何紀錄可供匯出！");
@@ -376,15 +376,18 @@
 <body class="bg-slate-100 p-4 min-h-screen">
   <div class="max-w-md mx-auto bg-white rounded-xl shadow-md overflow-hidden p-6 space-y-5">
     
-    <header class="border-b pb-3 flex justify-between items-center">
-      <div>
-        <div class="flex items-center gap-2">
-          <h1 class="text-xl font-bold text-slate-800">📺 Campus Studio</h1>
-          <span id="adminStatus" class="hidden text-[10px] bg-purple-600 text-white font-bold px-1.5 py-0.5 rounded">ADMIN</span>
+    <header class="border-b pb-3 flex justify-between items-center gap-3">
+      <div class="flex items-center gap-2.5">
+        <img src="CS_Logo.jpg" alt="Logo" class="h-10 w-auto rounded object-contain">
+        <div>
+          <div class="flex items-center gap-1.5">
+            <h1 class="text-base font-bold text-slate-800 leading-tight">Campus Studio</h1>
+            <span id="adminStatus" class="hidden text-[10px] bg-purple-600 text-white font-bold px-1.5 py-0.5 rounded">ADMIN</span>
+          </div>
+          <p class="text-[11px] text-slate-500 leading-tight">電子 Log Book 系統</p>
         </div>
-        <p class="text-xs text-slate-500">雲端即時器材借用系統</p>
       </div>
-      <button id="adminLoginBtn" class="text-xs bg-slate-800 text-slate-200 px-2.5 py-1 rounded hover:bg-slate-700 transition">
+      <button id="adminLoginBtn" class="text-xs bg-slate-800 text-slate-200 px-2.5 py-1 rounded hover:bg-slate-700 transition shrink-0">
         🔑 Admin 登入
       </button>
     </header>
@@ -477,7 +480,7 @@
             <span class="ml-1.5 text-xs text-gray-700">連火牛/充電器</span>
           </label>
           <label class="inline-flex items-center">
-            <input type="checkbox" id="hasBag" class="rounded border-gray-300 text-blue-600" checked>
+            <input type="checkbox" id="hasBag" class="rounded border-gray-300 text-blue-600">
             <span class="ml-1.5 text-xs text-gray-700">連相機袋</span>
           </label>
         </div>
