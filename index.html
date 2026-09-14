@@ -38,6 +38,8 @@
     let currentTab = 'active'; 
     let selectedDevices = new Set();
     let pendingReturnId = null;
+    let isAdmin = false;
+    const ADMIN_PASS = "admin888"; // 可自訂管理員密碼
 
     const form = document.getElementById('logForm');
     const logList = document.getElementById('logList');
@@ -45,10 +47,34 @@
     const returnModal = document.getElementById('returnModal');
     const confirmReturnCheckbox = document.getElementById('confirmReturnCheckbox');
     const confirmReturnBtn = document.getElementById('confirmReturnBtn');
+    const adminModal = document.getElementById('adminModal');
 
-    // 處理多選 Tag 點擊
+    // Admin 登入切換
+    document.getElementById('adminLoginBtn').addEventListener('click', () => {
+      if (isAdmin) {
+        isAdmin = false;
+        document.getElementById('adminStatus').classList.add('hidden');
+        document.getElementById('adminLoginBtn').innerText = "🔑 Admin 登入";
+        document.getElementById('adminLoginBtn').className = "text-xs bg-slate-800 text-slate-200 px-2.5 py-1 rounded hover:bg-slate-700 transition";
+        render();
+      } else {
+        const pass = prompt("請輸入 Super Admin 密碼：");
+        if (pass === ADMIN_PASS) {
+          isAdmin = true;
+          document.getElementById('adminStatus').classList.remove('hidden');
+          document.getElementById('adminLoginBtn').innerText = "🚪 登出 Admin";
+          document.getElementById('adminLoginBtn').className = "text-xs bg-red-600 text-white px-2.5 py-1 rounded hover:bg-red-700 transition";
+          render();
+        } else if (pass !== null) {
+          alert("密碼錯誤！");
+        }
+      }
+    });
+
+    // 多選 Tag 點擊
     document.querySelectorAll('.device-chip').forEach(chip => {
       chip.addEventListener('click', () => {
+        if (chip.disabled) return;
         const val = chip.getAttribute('data-val');
         if (selectedDevices.has(val)) {
           selectedDevices.delete(val);
@@ -71,26 +97,46 @@
         return;
       }
 
+      const sdCardInput = document.getElementById('sdCard').value.trim();
+
+      const isSdCardBorrowed = allLogs.some(log => 
+        !log.returned && log.sdCard && log.sdCard.toLowerCase() === sdCardInput.toLowerCase()
+      );
+
+      if (isSdCardBorrowed) {
+        alert(`❌ SD Card [${sdCardInput}] 目前已被借出，未完成歸還前不能重複借用！`);
+        return;
+      }
+
+      const activeBorrowedDevices = new Set();
+      allLogs.filter(l => !l.returned).forEach(l => {
+        l.device.split(', ').forEach(d => activeBorrowedDevices.add(d));
+      });
+
+      const conflictDevice = Array.from(selectedDevices).find(d => activeBorrowedDevices.has(d));
+      if (conflictDevice) {
+        alert(`❌ 器材 [${conflictDevice}] 目前已被其他人借出，無法登記！`);
+        return;
+      }
+
       const submitBtn = form.querySelector('button[type="submit"]');
       submitBtn.disabled = true;
       submitBtn.innerText = "登記中...";
 
-      const deviceString = Array.from(selectedDevices).join(', ');
-
       try {
         await addDoc(logsRef, {
           borrower: document.getElementById('borrower').value,
-          device: deviceString,
-          sdCard: document.getElementById('sdCard').value,
+          device: Array.from(selectedDevices).join(', '),
+          sdCard: sdCardInput,
           batteryCount: parseInt(document.getElementById('batteryCount').value) || 0,
           hasCharger: document.getElementById('hasCharger').checked,
           hasBag: document.getElementById('hasBag').checked,
           borrowTime: serverTimestamp(),
           returned: false,
-          returnTime: null
+          returnTime: null,
+          photoProcessed: true
         });
 
-        // 重置表單與選取狀態
         form.reset();
         selectedDevices.clear();
         document.querySelectorAll('.device-chip').forEach(chip => {
@@ -105,6 +151,32 @@
         submitBtn.innerText = "登記借出";
       }
     });
+
+    // 更新器材按鈕狀態
+    function updateChipAvailability() {
+      const activeBorrowedDevices = new Set();
+      allLogs.filter(log => !log.returned).forEach(log => {
+        log.device.split(', ').forEach(item => activeBorrowedDevices.add(item));
+      });
+
+      document.querySelectorAll('.device-chip').forEach(chip => {
+        const val = chip.getAttribute('data-val');
+        if (activeBorrowedDevices.has(val)) {
+          chip.disabled = true;
+          chip.classList.remove('bg-blue-600', 'bg-gray-100', 'text-gray-700', 'border-gray-200', 'text-white');
+          chip.classList.add('bg-slate-800', 'text-slate-400', 'border-slate-700', 'line-through', 'cursor-not-allowed', 'opacity-50');
+          selectedDevices.delete(val);
+        } else {
+          chip.disabled = false;
+          chip.classList.remove('bg-slate-800', 'text-slate-400', 'border-slate-700', 'line-through', 'cursor-not-allowed', 'opacity-50');
+          if (selectedDevices.has(val)) {
+            chip.classList.add('bg-blue-600', 'text-white', 'border-blue-600');
+          } else {
+            chip.classList.add('bg-gray-100', 'text-gray-700', 'border-gray-200');
+          }
+        }
+      });
+    }
 
     // 渲染清單
     function render() {
@@ -127,20 +199,30 @@
       filtered.forEach(log => {
         const bTime = log.borrowTime ? new Date(log.borrowTime.toDate()).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '剛才';
         const rTime = log.returnTime ? new Date(log.returnTime.toDate()).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+        const isNotProcessed = log.photoProcessed === false;
 
         const item = document.createElement('div');
-        item.className = `p-3 rounded-lg border transition ${log.returned ? 'bg-gray-50 border-gray-200 opacity-70' : 'bg-blue-50 border-blue-200'}`;
+        item.className = `p-3 rounded-lg border transition ${log.returned ? (isNotProcessed ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200 opacity-80') : 'bg-blue-50 border-blue-200'}`;
+        
+        let actionButtons = '';
+        if (!log.returned) {
+          actionButtons = `<button data-id="${log.id}" class="open-return-modal text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded font-medium shadow-sm transition shrink-0 ml-1">歸還</button>`;
+          if (isAdmin) {
+            actionButtons += `<button data-id="${log.id}" class="open-admin-modal text-xs bg-purple-600 hover:bg-purple-700 text-white px-2.5 py-1.5 rounded font-medium shadow-sm transition shrink-0 ml-1">⚡ 強制歸還</button>`;
+          }
+        } else {
+          actionButtons = `<span class="text-xs ${isNotProcessed ? 'bg-red-100 text-red-700 font-bold' : 'bg-gray-200 text-gray-600'} px-2 py-1 rounded shrink-0 ml-1">已還 (${rTime})</span>`;
+        }
+
         item.innerHTML = `
           <div class="flex justify-between items-start">
             <div>
               <span class="font-bold text-slate-800">${log.borrower}</span>
               <span class="text-xs text-gray-500"> (${bTime})</span>
+              ${isNotProcessed ? '<span class="ml-1 inline-block bg-red-600 text-white text-[10px] px-1.5 py-0.5 rounded font-bold">⚠️ 未過相/執相</span>' : ''}
               <p class="text-sm font-semibold text-blue-900 mt-0.5 break-words">${log.device}</p>
             </div>
-            ${!log.returned ? 
-              `<button data-id="${log.id}" class="open-return-modal text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded font-medium shadow-sm transition shrink-0 ml-2">歸還</button>` : 
-              `<span class="text-xs bg-gray-200 px-2 py-1 rounded text-gray-600 shrink-0 ml-2">已還 (${rTime})</span>`
-            }
+            <div class="flex items-center">${actionButtons}</div>
           </div>
           <div class="mt-2 text-xs text-gray-600 border-t border-gray-200/60 pt-2 space-y-0.5">
             <p>💾 SD Card: <b class="text-gray-800">${log.sdCard}</b> | 🔋 電池: <b class="text-gray-800">${log.batteryCount} 粒</b></p>
@@ -150,7 +232,7 @@
         logList.appendChild(item);
       });
 
-      // 點擊歸還按鈕時觸發 Modal
+      // 學生正常歸還 Modal
       document.querySelectorAll('.open-return-modal').forEach(btn => {
         btn.addEventListener('click', (e) => {
           pendingReturnId = e.target.getAttribute('data-id');
@@ -159,9 +241,17 @@
           returnModal.classList.remove('hidden');
         });
       });
+
+      // Admin 強制歸還 Modal
+      document.querySelectorAll('.open-admin-modal').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          pendingReturnId = e.target.getAttribute('data-id');
+          adminModal.classList.remove('hidden');
+        });
+      });
     }
 
-    // Modal 勾選邏輯
+    // 學生歸還邏輯
     confirmReturnCheckbox.addEventListener('change', (e) => {
       confirmReturnBtn.disabled = !e.target.checked;
     });
@@ -175,9 +265,40 @@
       if (pendingReturnId) {
         await updateDoc(doc(db, "logs", pendingReturnId), {
           returned: true,
-          returnTime: serverTimestamp()
+          returnTime: serverTimestamp(),
+          photoProcessed: true
         });
         returnModal.classList.add('hidden');
+        pendingReturnId = null;
+      }
+    });
+
+    // Admin 強制歸還邏輯
+    document.getElementById('cancelAdminBtn').addEventListener('click', () => {
+      adminModal.classList.add('hidden');
+      pendingReturnId = null;
+    });
+
+    document.getElementById('adminReturnProcessedBtn').addEventListener('click', async () => {
+      if (pendingReturnId) {
+        await updateDoc(doc(db, "logs", pendingReturnId), {
+          returned: true,
+          returnTime: serverTimestamp(),
+          photoProcessed: true
+        });
+        adminModal.classList.add('hidden');
+        pendingReturnId = null;
+      }
+    });
+
+    document.getElementById('adminReturnUnprocessedBtn').addEventListener('click', async () => {
+      if (pendingReturnId) {
+        await updateDoc(doc(db, "logs", pendingReturnId), {
+          returned: true,
+          returnTime: serverTimestamp(),
+          photoProcessed: false // 註記未執相/過片
+        });
+        adminModal.classList.add('hidden');
         pendingReturnId = null;
       }
     });
@@ -189,12 +310,13 @@
         return;
       }
 
-      let csvContent = "\uFEFF借用人/班別,借用器材與鏡頭,SD Card,電池數量,有火牛,有相機袋,借用時間,歸還狀態,歸還時間\n";
+      let csvContent = "\uFEFF借用人/班別,借用器材與鏡頭,SD Card,電池數量,有火牛,有相機袋,借用時間,歸還狀態,過相/執相狀態,歸還時間\n";
 
       allLogs.forEach(log => {
         const bTime = log.borrowTime ? new Date(log.borrowTime.toDate()).toLocaleString() : '';
         const rTime = log.returnTime ? new Date(log.returnTime.toDate()).toLocaleString() : '';
         const status = log.returned ? "已歸還" : "未歸還";
+        const photoStatus = log.photoProcessed === false ? "⚠️ 未過相/執相 (Admin強制歸還)" : "已過相/執相";
         
         const row = [
           `"${log.borrower || ''}"`,
@@ -205,6 +327,7 @@
           `"${log.hasBag ? '是' : '否'}"`,
           `"${bTime}"`,
           `"${status}"`,
+          `"${photoStatus}"`,
           `"${rTime}"`
         ];
         csvContent += row.join(",") + "\n";
@@ -226,12 +349,13 @@
     const q = query(logsRef, orderBy("borrowTime", "desc"));
     onSnapshot(q, (snapshot) => {
       allLogs = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
-      const activeCount = allLogs.filter(l => !l.returned).length;
-      document.getElementById('activeCount').innerText = activeCount;
+      document.getElementById('activeCount').innerText = allLogs.filter(l => !l.returned).length;
+      
+      updateChipAvailability();
       render();
     });
 
-    // Tab 切換事件
+    // Tab 切換
     document.getElementById('tabActive').addEventListener('click', () => {
       currentTab = 'active';
       document.getElementById('tabActive').className = "flex-1 py-1.5 text-xs font-bold text-center rounded-md bg-white text-blue-600 shadow-sm";
@@ -254,12 +378,15 @@
     
     <header class="border-b pb-3 flex justify-between items-center">
       <div>
-        <h1 class="text-xl font-bold text-slate-800">📺 Campus Studio Log Book</h1>
+        <div class="flex items-center gap-2">
+          <h1 class="text-xl font-bold text-slate-800">📺 Campus Studio</h1>
+          <span id="adminStatus" class="hidden text-[10px] bg-purple-600 text-white font-bold px-1.5 py-0.5 rounded">ADMIN</span>
+        </div>
         <p class="text-xs text-slate-500">雲端即時器材借用系統</p>
       </div>
-      <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
-        ● 即時連線
-      </span>
+      <button id="adminLoginBtn" class="text-xs bg-slate-800 text-slate-200 px-2.5 py-1 rounded hover:bg-slate-700 transition">
+        🔑 Admin 登入
+      </button>
     </header>
 
     <!-- 借用表單 -->
@@ -271,7 +398,7 @@
 
       <!-- 多選器材區 -->
       <div class="space-y-3">
-        <label class="block text-xs font-semibold text-gray-700">選擇器材及鏡頭（可多選）<span class="text-red-500">*</span></label>
+        <label class="block text-xs font-semibold text-gray-700">選擇器材及鏡頭（可多選，深色為已借出）<span class="text-red-500">*</span></label>
         
         <!-- 相機 -->
         <div>
@@ -386,11 +513,11 @@
 
   </div>
 
-  <!-- 歸還確認 Modal 彈窗 -->
+  <!-- 學生歸還確認 Modal -->
   <div id="returnModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
     <div class="bg-white rounded-xl max-w-sm w-full p-5 space-y-4 shadow-xl">
       <h3 class="text-base font-bold text-gray-800 border-b pb-2">⚠️ 歸還器材確認</h3>
-      <p class="text-xs text-gray-600 leading-relaxed">請確保已完成以下整理工作才進行歸還程序：</p>
+      <p class="text-xs text-gray-600 leading-relaxed">請確認已完成整理工作才進行歸還程序：</p>
       
       <div class="bg-amber-50 border border-amber-200 rounded-lg p-3">
         <label class="flex items-start gap-2.5 cursor-pointer">
@@ -409,5 +536,32 @@
       </div>
     </div>
   </div>
+
+  <!-- Super Admin 強制歸還 Modal -->
+  <div id="adminModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
+    <div class="bg-white rounded-xl max-w-sm w-full p-5 space-y-4 shadow-xl border-t-4 border-purple-600">
+      <h3 class="text-base font-bold text-purple-900 border-b pb-2">⚡ Super Admin 強制歸還設定</h3>
+      <p class="text-xs text-gray-600 leading-relaxed">請選擇此筆器材的歸還狀況：</p>
+      
+      <div class="space-y-2 pt-1">
+        <button id="adminReturnProcessedBtn" class="w-full bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-2.5 px-3 rounded-lg transition text-left flex justify-between items-center">
+          <span>✅ 正常歸還（已過相 / 執相）</span>
+          <span>➔</span>
+        </button>
+        
+        <button id="adminReturnUnprocessedBtn" class="w-full bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2.5 px-3 rounded-lg transition text-left flex justify-between items-center">
+          <span>❌ 未執相 / 未過片 (強制收回)</span>
+          <span>➔</span>
+        </button>
+      </div>
+
+      <div class="pt-2">
+        <button id="cancelAdminBtn" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold py-2 rounded-lg transition">
+          取消
+        </button>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>
