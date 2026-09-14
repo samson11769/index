@@ -43,7 +43,7 @@
     const logsRef = collection(db, "logs");
     const provider = new GoogleAuthProvider();
 
-    // ⚠️ 請修改為你學校的 Email Domain (例: school.edu.hk)
+    // 學校 Email 網域限制
     const SCHOOL_DOMAIN = "ndc.edu.hk"; 
 
     let currentUser = null;
@@ -51,24 +51,22 @@
     let currentTab = 'active'; 
     let selectedDevices = new Set();
     let pendingReturnId = null;
-    let pendingBorrowerName = "";
     let isAdmin = false;
     const ADMIN_PASS = "admin888";
 
-    // 元素引用
+    // DOM 元素
     const authOverlay = document.getElementById('authOverlay');
     const appContent = document.getElementById('appContent');
     const loginBtn = document.getElementById('loginBtn');
     const logoutBtn = document.getElementById('logoutBtn');
     const userEmailDisplay = document.getElementById('userEmailDisplay');
 
-    // Google 登入邏輯
+    // Google 登入
     loginBtn.addEventListener('click', async () => {
       try {
         const result = await signInWithPopup(auth, provider);
         const email = result.user.email;
         
-        // 驗證 Email Domain
         if (!email.endsWith(`@${SCHOOL_DOMAIN}`)) {
           alert(`❌ 存取失敗：必須使用學校 Email (@${SCHOOL_DOMAIN}) 登入！`);
           await signOut(auth);
@@ -91,11 +89,11 @@
         authOverlay.classList.add('hidden');
         appContent.classList.remove('hidden');
         
-        // 自動帶入姓名/班別欄位 (若 Google 有顯示名稱)
         const borrowerInput = document.getElementById('borrower');
         if (user.displayName && !borrowerInput.value) {
           borrowerInput.value = user.displayName;
         }
+        render(); // 登入後重新渲染權限
       } else {
         currentUser = null;
         authOverlay.classList.remove('hidden');
@@ -245,7 +243,7 @@
       try {
         await addDoc(logsRef, {
           borrower: document.getElementById('borrower').value.trim(),
-          userEmail: currentUser ? currentUser.email : '',
+          userEmail: currentUser ? currentUser.email.toLowerCase() : '', // 紀錄登入者 Email
           device: Array.from(selectedDevices).join(', '),
           sdCard: sdCardInput,
           batteryCount: parseInt(document.getElementById('batteryCount').value) || 0,
@@ -302,7 +300,7 @@
       updateLensAvailability();
     }
 
-    // 渲染清單
+    // 渲染清單（比對 Email 決定歸還權限）
     function render() {
       const searchInput = document.getElementById('searchInput');
       const keyword = searchInput.value.toLowerCase().trim();
@@ -322,17 +320,30 @@
         return;
       }
 
+      const myEmail = currentUser ? currentUser.email.toLowerCase() : '';
+
       filtered.forEach(log => {
         const bTime = log.borrowTime ? new Date(log.borrowTime.toDate()).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '剛才';
         const rTime = log.returnTime ? new Date(log.returnTime.toDate()).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
         const isNotProcessed = log.photoProcessed === false;
+        
+        // 判斷是否為本人借出
+        const isMyLog = log.userEmail && log.userEmail.toLowerCase() === myEmail;
 
         const item = document.createElement('div');
         item.className = `p-3 rounded-lg border transition ${log.returned ? (isNotProcessed ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200 opacity-80') : 'bg-blue-50 border-blue-200'}`;
         
         let actionButtons = '';
         if (!log.returned) {
-          actionButtons = `<button data-id="${log.id}" data-borrower="${log.borrower}" class="open-return-modal text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded font-medium shadow-sm transition shrink-0 ml-1">歸還</button>`;
+          // 本人可歸還
+          if (isMyLog) {
+            actionButtons = `<button data-id="${log.id}" class="open-return-modal text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded font-medium shadow-sm transition shrink-0 ml-1">歸還</button>`;
+          } else {
+            // 他人只顯示已被誰借走
+            actionButtons = `<span class="text-xs bg-amber-100 text-amber-800 font-medium px-2.5 py-1 rounded shrink-0 ml-1 cursor-default">🔒 ${log.borrower} 借出</span>`;
+          }
+
+          // Admin 權限
           if (isAdmin) {
             actionButtons += `<button data-id="${log.id}" class="open-admin-modal text-xs bg-purple-600 hover:bg-purple-700 text-white px-2.5 py-1.5 rounded font-medium shadow-sm transition shrink-0 ml-1">⚡ 強制歸還</button>`;
           }
@@ -358,14 +369,12 @@
         logList.appendChild(item);
       });
 
-      // 歸還驗證 Modal 觸發
+      // 本人歸還 Modal 觸發
       document.querySelectorAll('.open-return-modal').forEach(btn => {
         btn.addEventListener('click', (e) => {
           pendingReturnId = e.target.getAttribute('data-id');
-          pendingBorrowerName = e.target.getAttribute('data-borrower');
-          document.getElementById('verifyBorrowerInput').value = '';
           document.getElementById('confirmReturnCheckbox').checked = false;
-          checkReturnValid();
+          document.getElementById('confirmReturnBtn').disabled = true;
           document.getElementById('returnModal').classList.remove('hidden');
         });
       });
@@ -379,16 +388,10 @@
       });
     }
 
-    // 歸還檢查
-    function checkReturnValid() {
-      const inputName = document.getElementById('verifyBorrowerInput').value.trim();
-      const isNameMatched = inputName === pendingBorrowerName;
-      const isChecked = document.getElementById('confirmReturnCheckbox').checked;
-      document.getElementById('confirmReturnBtn').disabled = !(isNameMatched && isChecked);
-    }
-
-    document.getElementById('verifyBorrowerInput').addEventListener('input', checkReturnValid);
-    document.getElementById('confirmReturnCheckbox').addEventListener('change', checkReturnValid);
+    // 歸還勾選檢查
+    document.getElementById('confirmReturnCheckbox').addEventListener('change', (e) => {
+      document.getElementById('confirmReturnBtn').disabled = !e.target.checked;
+    });
 
     document.getElementById('cancelReturnBtn').addEventListener('click', () => {
       document.getElementById('returnModal').classList.add('hidden');
@@ -407,7 +410,7 @@
       }
     });
 
-    // Admin 強制歸還
+    // Admin 強制歸還邏輯
     document.getElementById('cancelAdminBtn').addEventListener('click', () => {
       document.getElementById('adminModal').classList.add('hidden');
       pendingReturnId = null;
@@ -507,7 +510,7 @@
 </head>
 <body class="bg-slate-100 p-4 min-h-screen flex items-center justify-center">
 
-  <!-- 未登入畫面 (登入卡片) -->
+  <!-- 未登入畫面 -->
   <div id="authOverlay" class="max-w-md w-full bg-white rounded-xl shadow-md p-8 text-center space-y-5">
     <img src="CS_Logo.jpg" alt="Logo" class="h-16 w-auto mx-auto object-contain">
     <div>
@@ -594,7 +597,7 @@
         </div>
       </div>
 
-      <!-- 配件登記區 -->
+      <!-- 配件區 -->
       <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-3">
         <span class="block text-xs font-semibold text-gray-600 uppercase tracking-wider">配件及 SD Card 登記</span>
         
@@ -637,7 +640,7 @@
       </button>
     </form>
 
-    <!-- 紀錄清單 -->
+    <!-- 清單與搜尋 -->
     <div class="pt-2 border-t space-y-3">
       <div class="flex items-center justify-between gap-2">
         <div class="flex-1 flex bg-slate-100 p-1 rounded-lg">
@@ -661,21 +664,17 @@
 
   </div>
 
-  <!-- 本人歸還驗證 Modal -->
+  <!-- 本人歸還確認 Modal -->
   <div id="returnModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
     <div class="bg-white rounded-xl max-w-sm w-full p-5 space-y-4 shadow-xl">
       <h3 class="text-base font-bold text-gray-800 border-b pb-2">🔒 本人歸還確認</h3>
-      <div class="space-y-2">
-        <label class="block text-xs font-medium text-gray-700">請輸入「借用人姓名/班別」進行身份驗證：</label>
-        <input type="text" id="verifyBorrowerInput" placeholder="輸入借用時填寫的姓名" class="w-full border rounded-md p-2 text-xs focus:ring-blue-500 border-gray-300">
-      </div>
       <div class="bg-amber-50 border border-amber-200 rounded-lg p-3">
         <label class="flex items-start gap-2.5 cursor-pointer">
           <input type="checkbox" id="confirmReturnCheckbox" class="mt-0.5 rounded border-amber-400 text-blue-600 focus:ring-blue-500">
           <span class="text-xs font-bold text-amber-900 leading-snug">我已確認過相 / 過片及完成執相工作</span>
         </label>
       </div>
-      <div class="flex gap-2 pt-2">
+      <div class="flex gap-2 pt-1">
         <button id="cancelReturnBtn" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold py-2 rounded-lg transition">取消</button>
         <button id="confirmReturnBtn" disabled class="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white text-xs font-semibold py-2 rounded-lg transition">確認歸還</button>
       </div>
@@ -685,7 +684,7 @@
   <!-- Admin 強制歸還 Modal -->
   <div id="adminModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
     <div class="bg-white rounded-xl max-w-sm w-full p-5 space-y-4 shadow-xl border-t-4 border-purple-600">
-      <h3 class="text-base font-bold text-purple-900 border-b pb-2">⚡ Super Admin 強制歸還設定</h3>
+      <h3 class="text-base font-bold text-purple-900 border-b pb-2">⚡ Super Admin 強制歸還</h3>
       <p class="text-xs text-gray-600 leading-relaxed">請選擇此筆器材的歸還狀況：</p>
       <div class="space-y-2 pt-1">
         <button id="adminReturnProcessedBtn" class="w-full bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-2.5 px-3 rounded-lg transition text-left flex justify-between items-center">
