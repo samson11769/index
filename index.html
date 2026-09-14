@@ -6,7 +6,6 @@
   <title>校園電視台 - 電子 Log Book</title>
   <script src="https://cdn.tailwindcss.com"></script>
   
-  <!-- 引入 Firebase SDK (Module 模式) -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
     import { 
@@ -21,7 +20,6 @@
       serverTimestamp 
     } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-    // Firebase 設定資料
     const firebaseConfig = {
       apiKey: "AIzaSyAMYMOxMBbT0GvSi7h2Bg677opVJS9dYzg",
       authDomain: "campus-studio-25210.firebaseapp.com",
@@ -32,15 +30,18 @@
       measurementId: "G-LM890QQCL2"
     };
 
-    // 初始化 Firebase 及 Firestore
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
     const logsRef = collection(db, "logs");
 
+    let allLogs = [];
+    let currentTab = 'active'; 
+
     const form = document.getElementById('logForm');
     const logList = document.getElementById('logList');
+    const searchInput = document.getElementById('searchInput');
 
-    // 提交借用資料至 Firebase
+    // 提交借用資料
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const submitBtn = form.querySelector('button[type="submit"]');
@@ -59,7 +60,6 @@
           returned: false,
           returnTime: null
         });
-
         form.reset();
       } catch (error) {
         alert("新增失敗: " + error.message);
@@ -69,25 +69,30 @@
       }
     });
 
-    // 即時監聽資料庫變化 (Real-time Listener)
-    const q = query(logsRef, orderBy("borrowTime", "desc"));
-    onSnapshot(q, (snapshot) => {
+    // 渲染清單
+    function render() {
+      const keyword = searchInput.value.toLowerCase().trim();
       logList.innerHTML = '';
-      
-      if (snapshot.empty) {
-        logList.innerHTML = '<p class="text-sm text-gray-400 text-center py-4">暫無借出紀錄</p>';
+
+      const filtered = allLogs.filter(log => {
+        const matchesTab = currentTab === 'active' ? !log.returned : log.returned;
+        const matchesSearch = log.borrower.toLowerCase().includes(keyword) || 
+                              log.device.toLowerCase().includes(keyword) || 
+                              log.sdCard.toLowerCase().includes(keyword);
+        return matchesTab && matchesSearch;
+      });
+
+      if (filtered.length === 0) {
+        logList.innerHTML = `<p class="text-sm text-gray-400 text-center py-6">${currentTab === 'active' ? '目前沒有未還器材 🎉' : '沒有相關歷史紀錄'}</p>`;
         return;
       }
 
-      snapshot.forEach((docSnap) => {
-        const log = docSnap.data();
-        const id = docSnap.id;
-        
-        const bTime = log.borrowTime ? new Date(log.borrowTime.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '剛才';
-        const rTime = log.returnTime ? new Date(log.returnTime.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+      filtered.forEach(log => {
+        const bTime = log.borrowTime ? new Date(log.borrowTime.toDate()).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '剛才';
+        const rTime = log.returnTime ? new Date(log.returnTime.toDate()).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
 
         const item = document.createElement('div');
-        item.className = `p-3 rounded-lg border transition ${log.returned ? 'bg-gray-100 border-gray-200 opacity-60' : 'bg-blue-50 border-blue-200'}`;
+        item.className = `p-3 rounded-lg border transition ${log.returned ? 'bg-gray-50 border-gray-200 opacity-70' : 'bg-blue-50 border-blue-200'}`;
         item.innerHTML = `
           <div class="flex justify-between items-start">
             <div>
@@ -96,13 +101,13 @@
               <p class="text-sm font-semibold text-blue-900 mt-0.5">${log.device}</p>
             </div>
             ${!log.returned ? 
-              `<button data-id="${id}" class="return-btn text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded font-medium shadow-sm transition">歸還</button>` : 
+              `<button data-id="${log.id}" class="return-btn text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded font-medium shadow-sm transition">歸還</button>` : 
               `<span class="text-xs bg-gray-200 px-2 py-1 rounded text-gray-600">已還 (${rTime})</span>`
             }
           </div>
           <div class="mt-2 text-xs text-gray-600 border-t border-gray-200/60 pt-2 space-y-0.5">
             <p>💾 SD Card: <b class="text-gray-800">${log.sdCard}</b> | 🔋 電池: <b class="text-gray-800">${log.batteryCount} 粒</b></p>
-            <p>🎒 包含配件: ${log.hasCharger ? '⚡火牛/充電器 ' : ''}${log.hasBag ? '👜相機袋' : ''}</p>
+            <p>🎒 配件: ${log.hasCharger ? '⚡火牛 ' : ''}${log.hasBag ? '👜相機袋' : ''}</p>
           </div>
         `;
         logList.appendChild(item);
@@ -117,13 +122,79 @@
           });
         });
       });
+    }
+
+    // 匯出 CSV 報表
+    document.getElementById('exportBtn').addEventListener('click', () => {
+      if (allLogs.length === 0) {
+        alert("目前沒有任何紀錄可供匯出！");
+        return;
+      }
+
+      let csvContent = "\uFEFF借用人/班別,主器材,SD Card,電池數量,有火牛,有相機袋,借用時間,歸還狀態,歸還時間\n";
+
+      allLogs.forEach(log => {
+        const bTime = log.borrowTime ? new Date(log.borrowTime.toDate()).toLocaleString() : '';
+        const rTime = log.returnTime ? new Date(log.returnTime.toDate()).toLocaleString() : '';
+        const status = log.returned ? "已歸還" : "未歸還";
+        
+        const row = [
+          `"${log.borrower || ''}"`,
+          `"${log.device || ''}"`,
+          `"${log.sdCard || ''}"`,
+          `"${log.batteryCount || 0}"`,
+          `"${log.hasCharger ? '是' : '否'}"`,
+          `"${log.hasBag ? '是' : '否'}"`,
+          `"${bTime}"`,
+          `"${status}"`,
+          `"${rTime}"`
+        ];
+        csvContent += row.join(",") + "\n";
+      });
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      
+      const today = new Date().toISOString().slice(0, 10);
+      link.setAttribute("href", url);
+      link.setAttribute("download", `TV_Studio_LogBook_${today}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     });
+
+    // 監聽 Firebase 資料
+    const q = query(logsRef, orderBy("borrowTime", "desc"));
+    onSnapshot(q, (snapshot) => {
+      allLogs = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+      const activeCount = allLogs.filter(l => !l.returned).length;
+      document.getElementById('activeCount').innerText = activeCount;
+      render();
+    });
+
+    // Tab 切換事件
+    document.getElementById('tabActive').addEventListener('click', () => {
+      currentTab = 'active';
+      document.getElementById('tabActive').className = "flex-1 py-1.5 text-xs font-bold text-center rounded-md bg-white text-blue-600 shadow-sm";
+      document.getElementById('tabHistory').className = "flex-1 py-1.5 text-xs font-bold text-center rounded-md text-gray-500 hover:text-gray-700";
+      render();
+    });
+
+    document.getElementById('tabHistory').addEventListener('click', () => {
+      currentTab = 'history';
+      document.getElementById('tabHistory').className = "flex-1 py-1.5 text-xs font-bold text-center rounded-md bg-white text-blue-600 shadow-sm";
+      document.getElementById('tabActive').className = "flex-1 py-1.5 text-xs font-bold text-center rounded-md text-gray-500 hover:text-gray-700";
+      render();
+    });
+
+    searchInput.addEventListener('input', render);
   </script>
 </head>
 <body class="bg-slate-100 p-4 min-h-screen">
-  <div class="max-w-md mx-auto bg-white rounded-xl shadow-md overflow-hidden p-6 space-y-6">
+  <div class="max-w-md mx-auto bg-white rounded-xl shadow-md overflow-hidden p-6 space-y-5">
     
-    <header class="border-b pb-4 flex justify-between items-center">
+    <header class="border-b pb-3 flex justify-between items-center">
       <div>
         <h1 class="text-xl font-bold text-slate-800">📺 Campus Studio Log Book</h1>
         <p class="text-xs text-slate-500">雲端即時器材借用系統</p>
@@ -134,25 +205,44 @@
     </header>
 
     <!-- 借用表單 -->
-    <form id="logForm" class="space-y-4">
+    <form id="logForm" class="space-y-3">
       <div>
-        <label class="block text-sm font-medium text-gray-700">借用人姓名 / 班別</label>
+        <label class="block text-xs font-semibold text-gray-700">借用人姓名 / 班別</label>
         <input type="text" id="borrower" required placeholder="例：3A 張小明" class="mt-1 w-full border border-gray-300 rounded-md p-2 text-sm focus:ring-blue-500 focus:border-blue-500">
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700">選擇主器材</label>
-        <select id="device" class="mt-1 w-full border border-gray-300 rounded-md p-2 text-sm">
-          <option value="Sony A7IV (Camera A)">Sony A7IV (Camera A)</option>
-          <option value="Sony A7III (Camera B)">Sony A7III (Camera B)</option>
-          <option value="Canon R6 (Camera C)">Canon R6 (Camera C)</option>
-          <option value="DJI Mic 無線麥克風">DJI Mic 無線麥克風</option>
-          <option value="Tripod 腳架">Tripod 腳架</option>
+        <label class="block text-xs font-semibold text-gray-700">選擇主器材</label>
+        <select id="device" class="mt-1 w-full border border-gray-300 rounded-md p-2 text-sm bg-white">
+          <optgroup label="📷 相機 / 攝影機 (Cameras)">
+            <option value="Sony A7c">Sony A7c</option>
+            <option value="Canon R8 1">Canon R8 1</option>
+            <option value="Canon R8 2">Canon R8 2</option>
+            <option value="Canon M50">Canon M50</option>
+            <option value="Sony Z90 1">Sony Z90 1</option>
+            <option value="Sony Z90 2">Sony Z90 2</option>
+            <option value="Sony Z150">Sony Z150</option>
+            <option value="Canon XA10">Canon XA10</option>
+            <option value="70D">70D</option>
+            <option value="XE-1">XE-1</option>
+          </optgroup>
+          <optgroup label="🎙️ 麥克風 (Microphones)">
+            <option value="DJI mic 2 無線麥克風 1">DJI mic 2 無線麥克風 1</option>
+            <option value="DJI mic 2 無線麥克風 2">DJI mic 2 無線麥克風 2</option>
+            <option value="DJI mic 3 無線麥克風 1">DJI mic 3 無線麥克風 1</option>
+            <option value="WIRELESS GO 無線麥克風">WIRELESS GO 無線麥克風</option>
+          </optgroup>
+          <optgroup label="📱 穩定器 (Gimbals)">
+            <option value="DJI 手機穩定器1">DJI 手機穩定器1</option>
+            <option value="DJI 手機穩定器2">DJI 手機穩定器2</option>
+            <option value="DJI 手機穩定器3">DJI 手機穩定器3</option>
+            <option value="DJI 手機穩定器4">DJI 手機穩定器4</option>
+          </optgroup>
         </select>
       </div>
 
       <!-- 配件登記區 -->
-      <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-3">
+      <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-2.5">
         <span class="block text-xs font-semibold text-gray-600 uppercase tracking-wider">配件登記</span>
         
         <div class="grid grid-cols-2 gap-2">
@@ -167,11 +257,11 @@
         </div>
 
         <div class="flex gap-4 pt-1">
-          <label class="inline-flex items-center text-sm">
+          <label class="inline-flex items-center">
             <input type="checkbox" id="hasCharger" class="rounded border-gray-300 text-blue-600">
             <span class="ml-1.5 text-xs text-gray-700">連火牛/充電器</span>
           </label>
-          <label class="inline-flex items-center text-sm">
+          <label class="inline-flex items-center">
             <input type="checkbox" id="hasBag" class="rounded border-gray-300 text-blue-600" checked>
             <span class="ml-1.5 text-xs text-gray-700">連相機袋</span>
           </label>
@@ -183,10 +273,26 @@
       </button>
     </form>
 
-    <!-- 即時借出紀錄列表 -->
-    <div>
-      <h2 class="text-base font-bold text-slate-800 mb-3">📋 借出紀錄 (雲端同步)</h2>
-      <div id="logList" class="space-y-2.5 max-h-[400px] overflow-y-auto pr-1">
+    <!-- 紀錄清單區塊 -->
+    <div class="pt-2 border-t space-y-3">
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex-1 flex bg-slate-100 p-1 rounded-lg">
+          <button id="tabActive" class="flex-1 py-1 text-xs font-bold text-center rounded-md bg-white text-blue-600 shadow-sm">
+            未歸還 (<span id="activeCount">0</span>)
+          </button>
+          <button id="tabHistory" class="flex-1 py-1 text-xs font-bold text-center rounded-md text-gray-500 hover:text-gray-700">
+            歷史紀錄
+          </button>
+        </div>
+        
+        <button id="exportBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shadow transition flex items-center gap-1 shrink-0">
+          📊 匯出 Excel
+        </button>
+      </div>
+
+      <input type="text" id="searchInput" placeholder="🔍 搜尋人名 / 器材 / SD 卡號..." class="w-full border rounded-md p-2 text-xs bg-slate-50">
+
+      <div id="logList" class="space-y-2.5 max-h-[350px] overflow-y-auto pr-1">
       </div>
     </div>
 
